@@ -104,19 +104,25 @@ std::string GetActiveWindowTitle() {
 }
 
 // --- 3. LOGGING SYSTEM ---
+// void WriteLog(std::string text) {
+//     char desktopPath[MAX_PATH];
+//     if (SHGetFolderPathA(NULL, CSIDL_DESKTOP, NULL, 0, desktopPath) == S_OK) {
+//         std::string fullPath = std::string(desktopPath) + "\\monitor_log.txt";
+//         std::ofstream logFile(fullPath, std::ios::app);
+//         if (logFile.is_open()) {
+//             std::time_t now = std::time(0);
+//             struct tm ltm;
+//             localtime_s(&ltm, &now);
+//             logFile << "[" << std::setfill('0') << std::setw(2) << ltm.tm_hour << ":" << ltm.tm_min << "] " << text << std::endl;
+//             logFile.close();
+//         }
+//     }
+// }
+
 void WriteLog(std::string text) {
-    char desktopPath[MAX_PATH];
-    if (SHGetFolderPathA(NULL, CSIDL_DESKTOP, NULL, 0, desktopPath) == S_OK) {
-        std::string fullPath = std::string(desktopPath) + "\\monitor_log.txt";
-        std::ofstream logFile(fullPath, std::ios::app);
-        if (logFile.is_open()) {
-            std::time_t now = std::time(0);
-            struct tm ltm;
-            localtime_s(&ltm, &now);
-            logFile << "[" << std::setfill('0') << std::setw(2) << ltm.tm_hour << ":" << ltm.tm_min << "] " << text << std::endl;
-            logFile.close();
-        }
-    }
+    // This prints to the screen only. 
+    // If you close the window, the information is gone forever.
+    std::printf("[%s]\n", text.c_str()); 
 }
 
 
